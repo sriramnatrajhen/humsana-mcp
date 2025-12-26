@@ -165,7 +165,7 @@ function getCurrentState() {
           AVG(focus_level) as focus,
           AVG(cognitive_load) as load,
           AVG(typing_wpm) as wpm
-        FROM signals 
+        FROM analysis_results 
         WHERE timestamp > datetime('now', '-5 minutes')`)
             .get();
         db.close();
