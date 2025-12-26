@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * Humsana MCP Server - Day 3 Update
+ * Humsana MCP Server - Day 3.5 Update
  *
- * Serves user behavioral state to Claude Desktop via MCP protocol.
- * Includes the Cognitive Interlock system for safe command execution.
+ * Cognitive Security for AI-assisted development.
  *
  * Tools:
  * - get_user_state: Get current stress/focus/fatigue
- * - check_dangerous_command: Check if a command is dangerous + user is fatigued
- * - safe_execute_command: THE wrapper tool for running commands with interlock
+ * - check_dangerous_command: Check if a command is dangerous
+ * - safe_execute_command: Execute shell commands with interlock
+ * - safe_write_file: Write files with AI rewrite protection (NEW)
  */
 export {};
 //# sourceMappingURL=index.d.ts.map

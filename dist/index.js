@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 "use strict";
 /**
- * Humsana MCP Server - Day 3 Update
+ * Humsana MCP Server - Day 3.5 Update
  *
- * Serves user behavioral state to Claude Desktop via MCP protocol.
- * Includes the Cognitive Interlock system for safe command execution.
+ * Cognitive Security for AI-assisted development.
  *
  * Tools:
  * - get_user_state: Get current stress/focus/fatigue
- * - check_dangerous_command: Check if a command is dangerous + user is fatigued
- * - safe_execute_command: THE wrapper tool for running commands with interlock
+ * - check_dangerous_command: Check if a command is dangerous
+ * - safe_execute_command: Execute shell commands with interlock
+ * - safe_write_file: Write files with AI rewrite protection (NEW)
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -28,6 +28,7 @@ const HUMSANA_DIR = (0, path_1.join)((0, os_1.homedir)(), ".humsana");
 const DB_PATH = (0, path_1.join)(HUMSANA_DIR, "signals.db");
 const CONFIG_PATH = (0, path_1.join)(HUMSANA_DIR, "config.yaml");
 const ACTIVITY_PATH = (0, path_1.join)(HUMSANA_DIR, "activity.json");
+const REVIEW_DIR = (0, path_1.join)(HUMSANA_DIR, "pending_reviews");
 // Default dangerous patterns
 const DEFAULT_DANGEROUS_PATTERNS = [
     "rm -rf",
@@ -51,6 +52,8 @@ function loadConfig() {
         dangerous_commands: DEFAULT_DANGEROUS_PATTERNS,
         deny_patterns: [],
         allow_patterns: [],
+        write_warn_threshold: 30,
+        write_block_threshold: 50,
     };
     if (!(0, fs_1.existsSync)(CONFIG_PATH)) {
         return defaults;
@@ -71,6 +74,10 @@ function loadConfig() {
                 config.fatigue_threshold = parseInt(value) || 70;
             if (key === "webhook_url" && value)
                 config.webhook_url = value;
+            if (key === "write_warn_threshold")
+                config.write_warn_threshold = parseInt(value) || 30;
+            if (key === "write_block_threshold")
+                config.write_block_threshold = parseInt(value) || 50;
         }
         return config;
     }
@@ -91,7 +98,6 @@ function getCognitiveUptime() {
         }
         const now = Date.now();
         const BREAK_THRESHOLD_MS = 60 * 60 * 1000; // 60 minutes
-        // Find last break (gap > 60 min)
         let lastBreakTime = null;
         for (let i = heartbeats.length - 1; i > 0; i--) {
             const current = new Date(heartbeats[i].timestamp).getTime();
@@ -102,7 +108,6 @@ function getCognitiveUptime() {
                 break;
             }
         }
-        // If no break found, use first heartbeat
         if (lastBreakTime === null) {
             lastBreakTime = new Date(heartbeats[0].timestamp).getTime();
         }
@@ -174,7 +179,6 @@ function getCurrentState() {
         const load = row?.load || 0;
         const wpm = row?.wpm || 0;
         const fatigue = calculateFatigue(stress, uptime.hours);
-        // Determine state
         let state;
         let stateLabel;
         let recommendations;
@@ -285,7 +289,7 @@ function isDangerousCommand(command, config) {
     }
     return false;
 }
-// The main interlock check
+// Check dangerous command
 function checkDangerousCommand(command) {
     const config = loadConfig();
     const state = getCurrentState();
@@ -317,15 +321,13 @@ function checkDangerousCommand(command) {
         message: "✅ Command is safe.",
     };
 }
-// Execute command with interlock (THE wrapper tool)
+// Execute command with interlock
 function safeExecuteCommand(command, overrideReason) {
     const config = loadConfig();
     const state = getCurrentState();
     const isDangerous = isDangerousCommand(command, config);
     const shouldBlock = isDangerous && state.fatigue.level > config.fatigue_threshold;
-    // Handle override
     if (shouldBlock && overrideReason) {
-        // User is overriding - log and proceed
         console.error(`[AUDIT] Override: ${command} | Reason: ${overrideReason}`);
         if (config.execution_mode === "dry_run") {
             return {
@@ -339,7 +341,6 @@ function safeExecuteCommand(command, overrideReason) {
                 mode: "dry_run",
             };
         }
-        // Live execution with override
         try {
             const result = (0, child_process_1.execSync)(command, {
                 encoding: "utf-8",
@@ -368,7 +369,6 @@ function safeExecuteCommand(command, overrideReason) {
             };
         }
     }
-    // Block if dangerous + fatigued + no override
     if (shouldBlock) {
         return {
             status: "BLOCKED",
@@ -384,7 +384,6 @@ function safeExecuteCommand(command, overrideReason) {
             override_required: true,
         };
     }
-    // Safe command or low fatigue - execute or simulate
     if (config.execution_mode === "dry_run") {
         return {
             status: "SIMULATED",
@@ -397,7 +396,6 @@ function safeExecuteCommand(command, overrideReason) {
             mode: "dry_run",
         };
     }
-    // Live execution
     try {
         const result = (0, child_process_1.execSync)(command, {
             encoding: "utf-8",
@@ -426,11 +424,244 @@ function safeExecuteCommand(command, overrideReason) {
         };
     }
 }
-// Main server setup
+// ============================================================
+// NEW: safe_write_file - AI Code Rewrite Protection
+// ============================================================
+/**
+ * Calculate "Destructive Impact" - lines removed from original
+ */
+function calculateDestructiveImpact(oldContent, newContent) {
+    const oldLines = oldContent.split("\n");
+    const newLines = newContent.split("\n");
+    // Simple diff: count lines that exist in old but not in new
+    const oldSet = new Set(oldLines.map(l => l.trim()).filter(l => l.length > 0));
+    const newSet = new Set(newLines.map(l => l.trim()).filter(l => l.length > 0));
+    let linesRemoved = 0;
+    let linesAdded = 0;
+    for (const line of oldSet) {
+        if (!newSet.has(line)) {
+            linesRemoved++;
+        }
+    }
+    for (const line of newSet) {
+        if (!oldSet.has(line)) {
+            linesAdded++;
+        }
+    }
+    const percentageRemoved = oldLines.length > 0
+        ? Math.round((linesRemoved / oldLines.length) * 100)
+        : 0;
+    return {
+        linesRemoved,
+        linesAdded,
+        totalOldLines: oldLines.length,
+        totalNewLines: newLines.length,
+        percentageRemoved,
+    };
+}
+/**
+ * Save content to pending review folder
+ */
+function saveToPendingReview(filepath, newContent) {
+    (0, fs_1.mkdirSync)(REVIEW_DIR, { recursive: true });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = filepath.replace(/[/\\]/g, "_");
+    const reviewPath = (0, path_1.join)(REVIEW_DIR, `${timestamp}_${filename}`);
+    (0, fs_1.writeFileSync)(reviewPath, newContent, "utf-8");
+    return reviewPath;
+}
+/**
+ * Safe write file with cognitive interlock
+ */
+function safeWriteFile(filepath, newContent, overrideReason) {
+    const config = loadConfig();
+    const state = getCurrentState();
+    const fatigueLevel = state.fatigue.level;
+    // Check if file exists
+    let oldContent = "";
+    let isNewFile = true;
+    if ((0, fs_1.existsSync)(filepath)) {
+        oldContent = (0, fs_1.readFileSync)(filepath, "utf-8");
+        isNewFile = false;
+    }
+    // Calculate destructive impact
+    const impact = calculateDestructiveImpact(oldContent, newContent);
+    // Determine if this write is risky
+    const isHighImpact = impact.linesRemoved > config.write_warn_threshold;
+    const isCriticalImpact = impact.linesRemoved > config.write_block_threshold;
+    // Fatigue-based blocking logic
+    const shouldWarn = fatigueLevel > 50 && isHighImpact;
+    const shouldBlock = fatigueLevel > 70 && isHighImpact;
+    const shouldHardBlock = fatigueLevel > 80 && isCriticalImpact;
+    // Handle override for blocked writes
+    if ((shouldBlock || shouldHardBlock) && overrideReason) {
+        console.error(`[AUDIT] Write Override: ${filepath} | Removed: ${impact.linesRemoved} lines | Reason: ${overrideReason}`);
+        if (config.execution_mode === "dry_run") {
+            return {
+                status: "SIMULATED_OVERRIDE",
+                message: `🚨 [DRY RUN] Write override accepted.\n\n` +
+                    `File: \`${filepath}\`\n` +
+                    `Lines removed: ${impact.linesRemoved}\n` +
+                    `Reason: ${overrideReason}\n\n` +
+                    `File WOULD have been written.\n` +
+                    `(Write skipped: dry_run mode)`,
+                filepath,
+                impact: {
+                    lines_removed: impact.linesRemoved,
+                    lines_added: impact.linesAdded,
+                    percentage_removed: impact.percentageRemoved,
+                },
+                fatigue: state.fatigue,
+                mode: "dry_run",
+            };
+        }
+        // Live mode: actually write the file
+        (0, fs_1.mkdirSync)((0, path_1.dirname)(filepath), { recursive: true });
+        (0, fs_1.writeFileSync)(filepath, newContent, "utf-8");
+        return {
+            status: "WRITTEN_OVERRIDE",
+            message: `🚨 File written with safety override.`,
+            filepath,
+            impact: {
+                lines_removed: impact.linesRemoved,
+                lines_added: impact.linesAdded,
+                percentage_removed: impact.percentageRemoved,
+            },
+            fatigue: state.fatigue,
+            mode: "live",
+        };
+    }
+    // HARD BLOCK: Critical fatigue + massive deletion
+    if (shouldHardBlock) {
+        const reviewPath = saveToPendingReview(filepath, newContent);
+        return {
+            status: "BLOCKED",
+            message: `⛔ INTERLOCK ENGAGED: High-Risk AI Edit Blocked\n\n` +
+                `You are critically fatigued (${fatigueLevel}%) and this AI change deletes ${impact.linesRemoved} lines (${impact.percentageRemoved}% of the file).\n\n` +
+                `**You are unlikely to review this carefully.**\n\n` +
+                `The proposed change has been saved to:\n` +
+                `\`${reviewPath}\`\n\n` +
+                `To proceed, you MUST reply with:\n` +
+                `**OVERRIDE SAFETY PROTOCOL: [reason]**`,
+            filepath,
+            impact: {
+                lines_removed: impact.linesRemoved,
+                lines_added: impact.linesAdded,
+                percentage_removed: impact.percentageRemoved,
+            },
+            fatigue: state.fatigue,
+            mode: config.execution_mode,
+            review_path: reviewPath,
+            override_required: true,
+        };
+    }
+    // SOFT BLOCK: High fatigue + significant deletion
+    if (shouldBlock) {
+        const reviewPath = saveToPendingReview(filepath, newContent);
+        return {
+            status: "BLOCKED",
+            message: `⛔ INTERLOCK ENGAGED: AI Rewrite Blocked\n\n` +
+                `Fatigue: ${fatigueLevel}% (${state.fatigue.category})\n` +
+                `Lines removed: ${impact.linesRemoved}\n\n` +
+                `This AI change modifies significant code while you're fatigued.\n\n` +
+                `Saved for review: \`${reviewPath}\`\n\n` +
+                `To proceed, reply with:\n` +
+                `**OVERRIDE SAFETY PROTOCOL: [reason]**`,
+            filepath,
+            impact: {
+                lines_removed: impact.linesRemoved,
+                lines_added: impact.linesAdded,
+                percentage_removed: impact.percentageRemoved,
+            },
+            fatigue: state.fatigue,
+            mode: config.execution_mode,
+            review_path: reviewPath,
+            override_required: true,
+        };
+    }
+    // WARNING: Moderate fatigue + significant deletion
+    if (shouldWarn) {
+        if (config.execution_mode === "dry_run") {
+            return {
+                status: "SIMULATED_WARNING",
+                message: `⚠️ [DRY RUN] Warning: Large AI Edit\n\n` +
+                    `File: \`${filepath}\`\n` +
+                    `Lines removed: ${impact.linesRemoved}\n` +
+                    `Fatigue: ${fatigueLevel}%\n\n` +
+                    `This is a significant change. Please review carefully.\n\n` +
+                    `File WOULD have been written.\n` +
+                    `(Write skipped: dry_run mode)`,
+                filepath,
+                impact: {
+                    lines_removed: impact.linesRemoved,
+                    lines_added: impact.linesAdded,
+                    percentage_removed: impact.percentageRemoved,
+                },
+                fatigue: state.fatigue,
+                mode: "dry_run",
+            };
+        }
+        // Live mode with warning
+        (0, fs_1.mkdirSync)((0, path_1.dirname)(filepath), { recursive: true });
+        (0, fs_1.writeFileSync)(filepath, newContent, "utf-8");
+        return {
+            status: "WRITTEN_WARNING",
+            message: `⚠️ File written with warning.\n\n` +
+                `Lines removed: ${impact.linesRemoved}\n` +
+                `Fatigue: ${fatigueLevel}%\n\n` +
+                `Please review this change carefully.`,
+            filepath,
+            impact: {
+                lines_removed: impact.linesRemoved,
+                lines_added: impact.linesAdded,
+                percentage_removed: impact.percentageRemoved,
+            },
+            fatigue: state.fatigue,
+            mode: "live",
+        };
+    }
+    // SAFE: Low fatigue or small change
+    if (config.execution_mode === "dry_run") {
+        return {
+            status: "SIMULATED",
+            message: `✅ [DRY RUN] Safety check passed.\n\n` +
+                `File: \`${filepath}\`\n` +
+                `${isNewFile ? "New file" : `Lines removed: ${impact.linesRemoved}`}\n\n` +
+                `File WOULD have been written.\n` +
+                `(Write skipped: dry_run mode)`,
+            filepath,
+            impact: {
+                lines_removed: impact.linesRemoved,
+                lines_added: impact.linesAdded,
+                percentage_removed: impact.percentageRemoved,
+            },
+            fatigue: state.fatigue,
+            mode: "dry_run",
+        };
+    }
+    // Live mode: write the file
+    (0, fs_1.mkdirSync)((0, path_1.dirname)(filepath), { recursive: true });
+    (0, fs_1.writeFileSync)(filepath, newContent, "utf-8");
+    return {
+        status: "WRITTEN",
+        message: `✅ File written successfully.`,
+        filepath,
+        impact: {
+            lines_removed: impact.linesRemoved,
+            lines_added: impact.linesAdded,
+            percentage_removed: impact.percentageRemoved,
+        },
+        fatigue: state.fatigue,
+        mode: "live",
+    };
+}
+// ============================================================
+// MCP Server Setup
+// ============================================================
 async function main() {
     const server = new index_js_1.Server({
         name: "humsana",
-        version: "2.0.0", // Day 3 update
+        version: "2.1.0", // Day 3.5 update
     }, {
         capabilities: {
             tools: {},
@@ -481,6 +712,28 @@ async function main() {
                         required: ["command"],
                     },
                 },
+                {
+                    name: "safe_write_file",
+                    description: "Write content to a file with Humsana Cognitive Interlock protection. This tool prevents AI from making large destructive rewrites when the user is fatigued. If AI tries to delete/rewrite >30 lines while user is tired, it blocks the write and saves to a review folder. Use this for ALL file write operations.",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            filepath: {
+                                type: "string",
+                                description: "The absolute path to the file to write",
+                            },
+                            content: {
+                                type: "string",
+                                description: "The content to write to the file",
+                            },
+                            override_reason: {
+                                type: "string",
+                                description: "If the user said 'OVERRIDE SAFETY PROTOCOL: [reason]', pass their reason here to bypass the interlock",
+                            },
+                        },
+                        required: ["filepath", "content"],
+                    },
+                },
             ],
         };
     });
@@ -523,14 +776,29 @@ async function main() {
                 ],
             };
         }
+        if (name === "safe_write_file") {
+            const filepath = args?.filepath || "";
+            const content = args?.content || "";
+            const overrideReason = args?.override_reason;
+            const result = safeWriteFile(filepath, content, overrideReason);
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify(result, null, 2),
+                    },
+                ],
+            };
+        }
         throw new Error(`Unknown tool: ${name}`);
     });
     // Start the server
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error("🚀 Humsana MCP server v2.0.0 running (Day 3: Cognitive Interlock)");
+    console.error("🚀 Humsana MCP server v2.1.0 running (Day 3.5: AI Write Protection)");
     console.error("📁 Reading from:", DB_PATH);
     console.error("⚙️ Config:", CONFIG_PATH);
+    console.error("📝 Review folder:", REVIEW_DIR);
 }
 main().catch((error) => {
     console.error("Fatal error:", error);
