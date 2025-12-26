@@ -1,8 +1,19 @@
 # @humsana/mcp-server
 
-MCP server for Humsana — AI that reads the room.
+MCP server for Humsana — The Cognitive Interlock for Claude Desktop.
 
-This package connects Claude Desktop to your local Humsana daemon, allowing Claude to adapt responses based on your current mental state.
+> 🛡️ "The breathalyzer for your terminal."
+
+This package prevents you from running dangerous commands when you're fatigued. Think of it as an industrial safety interlock, but for your brain.
+
+## What It Does
+
+| Situation | What Happens |
+|-----------|--------------|
+| You're fresh, running `ls` | ✅ Just runs |
+| You're fresh, running `rm -rf` | ⚠️ Warning, but allowed |
+| You're tired, running `rm -rf` | ⛔ **BLOCKED** — requires override |
+| You override with reason | 🚨 Logged, then executed |
 
 ## Prerequisites
 
@@ -36,31 +47,11 @@ Add to `~/.config/Claude/claude_desktop_config.json` (Mac/Linux) or `%APPDATA%\C
 
 Restart Claude Desktop.
 
-## What It Does
-
-Claude will now have access to:
-
-### 🎯 Your Current State
-
-| State | Claude's Response Style |
-|-------|------------------------|
-| 😌 Relaxed | Friendly, detailed, asks questions |
-| 💼 Working | Helpful, professional |
-| 🎯 Focused | Direct, won't interrupt your flow |
-| 😰 Stressed | Brief, gets to the point |
-| 🔴 Debugging | Minimal, just gives the fix |
-
-### ⚠️ Dangerous Command Detection
-
-When you're stressed and ask about commands like `rm -rf` or `DROP TABLE`, Claude will warn you:
-
-> ⚠️ HUMSANA ALERT: You appear to be stressed (78% stress) and are about to run a destructive command. Take a breath. Are you absolutely sure?
-
 ## Tools Available to Claude
 
 ### `get_user_state`
 
-Returns your current behavioral state:
+Returns your current behavioral state and fatigue:
 
 ```json
 {
@@ -69,13 +60,16 @@ Returns your current behavioral state:
   "metrics": {
     "stress_level": 0.25,
     "focus_level": 0.82,
-    "cognitive_load": 0.45,
-    "typing_wpm": 65
+    "fatigue_level": 45,
+    "uptime_hours": 4.5
+  },
+  "fatigue": {
+    "level": 45,
+    "category": "moderate",
+    "uptime_hours": 4.5
   },
   "recommendations": {
     "style": "direct",
-    "length": "moderate",
-    "ask_clarifying_questions": false,
     "tone": "efficient, don't interrupt flow"
   }
 }
@@ -83,11 +77,89 @@ Returns your current behavioral state:
 
 ### `check_dangerous_command`
 
-Checks if a command is dangerous and whether you're in a state to safely run it.
+Checks if a command is dangerous and whether you're too fatigued to run it safely.
+
+### `safe_execute_command` ⭐ NEW
+
+**THE wrapper tool for running commands.** This replaces any other shell/bash tool.
+
+- Checks fatigue level before execution
+- Blocks dangerous commands when fatigued
+- Requires "OVERRIDE SAFETY PROTOCOL: [reason]" to proceed
+- Logs all safety events for post-mortems
+
+## Execution Modes
+
+Configure in `~/.humsana/config.yaml`:
+
+### Dry Run (Default — Safe for Testing)
+
+```yaml
+execution_mode: dry_run
+```
+
+Commands are simulated, not executed. Perfect for trying out the interlock.
+
+### Live Mode
+
+```yaml
+execution_mode: live
+```
+
+Commands are actually executed. Only enable after you trust the system.
+
+## Configuration
+
+Create `~/.humsana/config.yaml`:
+
+```yaml
+# Execution mode: 'dry_run' (default) or 'live'
+execution_mode: dry_run
+
+# Fatigue threshold (0-100). Above this, dangerous commands are blocked.
+fatigue_threshold: 70
+
+# Additional patterns to block
+deny_patterns:
+  - "aws ec2 terminate"
+  - "docker rm -f"
+
+# Webhook for Slack/PagerDuty notifications
+webhook_url: https://hooks.slack.com/services/XXX/YYY/ZZZ
+```
+
+## Override Protocol
+
+When blocked, you must say:
+
+```
+OVERRIDE SAFETY PROTOCOL: [reason]
+```
+
+Example:
+```
+OVERRIDE SAFETY PROTOCOL: P0 production outage, need to restart pods
+```
+
+This is logged for post-mortem analysis.
 
 ## Privacy
 
-🔒 **100% Local.** This server only reads from `~/.humsana/signals.db` on your machine. No network calls. No data sent anywhere.
+🔒 **100% Local.** 
+
+- Reads from `~/.humsana/signals.db` on your machine
+- No network calls (except optional webhook)
+- No data sent to any server
+- Fully auditable open-source code
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `~/.humsana/signals.db` | Behavioral data from daemon |
+| `~/.humsana/config.yaml` | Your configuration |
+| `~/.humsana/activity.json` | Activity heartbeats for fatigue |
+| `~/.humsana/audit.json` | Safety event log |
 
 ## License
 
