@@ -1,0 +1,46 @@
+{
+  "name": "@humsana/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Humsana - AI that reads the room",
+  "main": "dist/index.js",
+  "bin": {
+    "humsana-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "ai",
+    "context",
+    "focus",
+    "stress",
+    "productivity"
+  ],
+  "author": "Humsana",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sriramnatrajhen/humsana-mcp"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "better-sqlite3": "^9.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.9",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/**/*"
+  ]
+}
