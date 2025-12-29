@@ -38,7 +38,7 @@ const REVIEW_DIR = join(HUMSANA_DIR, "pending_reviews");
 // NEW: License paths
 const LICENSE_PATH = join(HUMSANA_DIR, "license.key");
 const LICENSE_CACHE_PATH = join(HUMSANA_DIR, "license_cache.json");
-const LICENSE_API_URL = process.env.HUMSANA_LICENSE_API || "https://api.humsana.com/license/verify";
+const LICENSE_API_URL = process.env.HUMSANA_LICENSE_API || "https://humsana.com/license/verify";
 
 // ============================================================
 // DEFAULT PATTERNS
@@ -1009,7 +1009,7 @@ async function main() {
     return {
       tools: [
         {
-          name: "humsana:get_user_state",
+          name: "humsana_get_user_state",
           description:
             "Get the user's current behavioral state including stress level, focus level, fatigue, and response style recommendations. Use this at the start of conversations to adapt your communication style.",
           inputSchema: {
@@ -1019,7 +1019,7 @@ async function main() {
           },
         },
         {
-          name: "humsana:check_dangerous_command",
+          name: "humsana_check_dangerous_command",
           description:
             "Check if a command is dangerous and whether the user is too fatigued to safely run it. Use this before helping with potentially destructive operations like rm -rf, DROP TABLE, git push --force, kubectl delete, terraform destroy, etc.",
           inputSchema: {
@@ -1034,7 +1034,7 @@ async function main() {
           },
         },
         {
-          name: "humsana:safe_execute_command",
+          name: "humsana_safe_execute_command",
           description:
             "Execute a shell command with Humsana Cognitive Interlock protection. This is THE tool for running commands - it blocks dangerous commands when the user is fatigued, requires override confirmation for high-risk operations, and logs all safety events. Use this instead of any other shell/bash tool.",
           inputSchema: {
@@ -1054,7 +1054,7 @@ async function main() {
           },
         },
         {
-          name: "humsana:safe_write_file",
+          name: "humsana_safe_write_file",
           description:
             "Write content to a file with Humsana Cognitive Interlock protection. This tool prevents AI from making large destructive rewrites when the user is fatigued. If AI tries to delete/rewrite >30 lines while user is tired, it blocks the write and saves to a review folder. Use this for ALL file write operations.",
           inputSchema: {
@@ -1085,7 +1085,7 @@ async function main() {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
-    if (name === "humsana:get_user_state") {
+    if (name === "humsana_get_user_state") {
       const state = getCurrentState();
       const license = await verifyLicense();  // NEW: Include license info
       const config = loadConfig();
@@ -1112,7 +1112,7 @@ async function main() {
       };
     }
 
-    if (name === "humsana:check_dangerous_command") {
+    if (name === "humsana_check_dangerous_command") {
       const command = (args as { command?: string })?.command || "";
       const result = checkDangerousCommand(command);
       return {
@@ -1125,7 +1125,7 @@ async function main() {
       };
     }
 
-    if (name === "humsana:safe_execute_command") {
+    if (name === "humsana_safe_execute_command") {
       const command = (args as { command?: string; override_reason?: string })?.command || "";
       const overrideReason = (args as { override_reason?: string })?.override_reason;
       const result = await safeExecuteCommand(command, overrideReason);  // NOW ASYNC
@@ -1139,7 +1139,7 @@ async function main() {
       };
     }
 
-    if (name === "humsana:safe_write_file") {
+    if (name === "humsana_safe_write_file") {
       const filepath = (args as { filepath?: string })?.filepath || "";
       const content = (args as { content?: string })?.content || "";
       const overrideReason = (args as { override_reason?: string })?.override_reason;
