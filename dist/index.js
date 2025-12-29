@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 /**
- * Humsana MCP Server - Day 3.5 Update
+ * Humsana MCP Server - v2.2.0
  *
  * Cognitive Security for AI-assisted development.
  *
@@ -9,7 +9,9 @@
  * - get_user_state: Get current stress/focus/fatigue
  * - check_dangerous_command: Check if a command is dangerous
  * - safe_execute_command: Execute shell commands with interlock
- * - safe_write_file: Write files with AI rewrite protection (NEW)
+ * - safe_write_file: Write files with AI rewrite protection
+ *
+ * v2.2.0: Added license verification for Pro features
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -23,13 +25,21 @@ const os_1 = require("os");
 const fs_1 = require("fs");
 const path_1 = require("path");
 const child_process_1 = require("child_process");
-// Paths
+// ============================================================
+// PATHS
+// ============================================================
 const HUMSANA_DIR = (0, path_1.join)((0, os_1.homedir)(), ".humsana");
 const DB_PATH = (0, path_1.join)(HUMSANA_DIR, "signals.db");
 const CONFIG_PATH = (0, path_1.join)(HUMSANA_DIR, "config.yaml");
 const ACTIVITY_PATH = (0, path_1.join)(HUMSANA_DIR, "activity.json");
 const REVIEW_DIR = (0, path_1.join)(HUMSANA_DIR, "pending_reviews");
-// Default dangerous patterns
+// NEW: License paths
+const LICENSE_PATH = (0, path_1.join)(HUMSANA_DIR, "license.key");
+const LICENSE_CACHE_PATH = (0, path_1.join)(HUMSANA_DIR, "license_cache.json");
+const LICENSE_API_URL = process.env.HUMSANA_LICENSE_API || "https://api.humsana.com/license/verify";
+// ============================================================
+// DEFAULT PATTERNS
+// ============================================================
 const DEFAULT_DANGEROUS_PATTERNS = [
     "rm -rf",
     "drop database",
@@ -44,7 +54,77 @@ const DEFAULT_DANGEROUS_PATTERNS = [
     "dd if=",
     "mkfs",
 ];
-// Load config from YAML (simple parser)
+// ============================================================
+// LICENSE VERIFICATION (NEW)
+// ============================================================
+async function verifyLicense() {
+    // Check if license file exists
+    if (!(0, fs_1.existsSync)(LICENSE_PATH)) {
+        return { valid: false, tier: "free", reason: "No license file found" };
+    }
+    const licenseKey = (0, fs_1.readFileSync)(LICENSE_PATH, "utf-8").trim();
+    if (!licenseKey || !licenseKey.startsWith("hum_pro_")) {
+        return { valid: false, tier: "free", reason: "Invalid license format" };
+    }
+    // Check cache first (offline grace period: 7 days)
+    if ((0, fs_1.existsSync)(LICENSE_CACHE_PATH)) {
+        try {
+            const cache = JSON.parse((0, fs_1.readFileSync)(LICENSE_CACHE_PATH, "utf-8"));
+            const verifiedAt = new Date(cache.verified_at);
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+            if (verifiedAt > sevenDaysAgo && cache.valid) {
+                // Cache is fresh, use it (allows offline usage)
+                return { valid: true, tier: cache.tier };
+            }
+        }
+        catch {
+            // Cache corrupted, will re-verify
+        }
+    }
+    // Verify with server
+    try {
+        const response = await fetch(LICENSE_API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ license_key: licenseKey }),
+            signal: AbortSignal.timeout(5000), // 5 second timeout
+        });
+        if (response.ok) {
+            const data = await response.json();
+            // Update cache
+            const cache = {
+                valid: data.valid,
+                tier: data.tier || "pro",
+                verified_at: new Date().toISOString(),
+                expires_at: data.expires_at,
+            };
+            (0, fs_1.writeFileSync)(LICENSE_CACHE_PATH, JSON.stringify(cache, null, 2));
+            return { valid: data.valid, tier: data.tier || "pro", reason: data.reason };
+        }
+    }
+    catch (error) {
+        // Network error - check if we have a valid cache (extended grace period: 30 days)
+        if ((0, fs_1.existsSync)(LICENSE_CACHE_PATH)) {
+            try {
+                const cache = JSON.parse((0, fs_1.readFileSync)(LICENSE_CACHE_PATH, "utf-8"));
+                const verifiedAt = new Date(cache.verified_at);
+                const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+                if (verifiedAt > thirtyDaysAgo && cache.valid) {
+                    // Extended grace period for network issues
+                    return { valid: true, tier: cache.tier, reason: "Offline mode (cached)" };
+                }
+            }
+            catch {
+                // Cache corrupted
+            }
+        }
+        return { valid: false, tier: "free", reason: "Unable to verify license (offline)" };
+    }
+    return { valid: false, tier: "free", reason: "Verification failed" };
+}
+// ============================================================
+// CONFIG LOADING (Your existing code)
+// ============================================================
 function loadConfig() {
     const defaults = {
         execution_mode: "dry_run",
@@ -85,7 +165,9 @@ function loadConfig() {
         return defaults;
     }
 }
-// Get cognitive uptime from activity.json
+// ============================================================
+// COGNITIVE UPTIME (Your existing code)
+// ============================================================
 function getCognitiveUptime() {
     if (!(0, fs_1.existsSync)(ACTIVITY_PATH)) {
         return { hours: 0, category: "low" };
@@ -127,13 +209,17 @@ function getCognitiveUptime() {
         return { hours: 0, category: "low" };
     }
 }
-// Calculate fatigue level
+// ============================================================
+// FATIGUE CALCULATION (Your existing code)
+// ============================================================
 function calculateFatigue(stressLevel, uptimeHours) {
     const baseFatigue = Math.min(60, (uptimeHours / 12) * 60);
     const stressFatigue = stressLevel * 40;
     return Math.min(100, Math.max(0, Math.round(baseFatigue + stressFatigue)));
 }
-// Get current user state from daemon database
+// ============================================================
+// GET CURRENT STATE (Your existing code)
+// ============================================================
 function getCurrentState() {
     const uptime = getCognitiveUptime();
     if (!(0, fs_1.existsSync)(DB_PATH)) {
@@ -278,7 +364,9 @@ function getCurrentState() {
         };
     }
 }
-// Check if command is dangerous
+// ============================================================
+// DANGEROUS COMMAND CHECK (Your existing code)
+// ============================================================
 function isDangerousCommand(command, config) {
     const lower = command.toLowerCase();
     const patterns = [...config.dangerous_commands, ...config.deny_patterns];
@@ -289,7 +377,6 @@ function isDangerousCommand(command, config) {
     }
     return false;
 }
-// Check dangerous command
 function checkDangerousCommand(command) {
     const config = loadConfig();
     const state = getCurrentState();
@@ -321,24 +408,38 @@ function checkDangerousCommand(command) {
         message: "✅ Command is safe.",
     };
 }
-// Execute command with interlock
-function safeExecuteCommand(command, overrideReason) {
+// ============================================================
+// SAFE EXECUTE COMMAND (Updated with license check)
+// ============================================================
+async function safeExecuteCommand(command, overrideReason) {
     const config = loadConfig();
     const state = getCurrentState();
+    const license = await verifyLicense(); // NEW: Check license
     const isDangerous = isDangerousCommand(command, config);
     const shouldBlock = isDangerous && state.fatigue.level > config.fatigue_threshold;
+    // NEW: Determine effective mode based on license
+    const effectiveMode = (config.execution_mode === "live" && license.valid)
+        ? "live"
+        : "dry_run";
+    // Handle override
     if (shouldBlock && overrideReason) {
         console.error(`[AUDIT] Override: ${command} | Reason: ${overrideReason}`);
-        if (config.execution_mode === "dry_run") {
+        if (effectiveMode === "dry_run") {
+            let message = `🚨 [DRY RUN] Override accepted.\n\n` +
+                `Command: \`${command}\`\n` +
+                `Reason: ${overrideReason}\n\n` +
+                `This command WOULD have been executed with override.\n` +
+                `(Execution skipped: dry_run mode)`;
+            // NEW: Add license message if needed
+            if (config.execution_mode === "live" && !license.valid) {
+                message += `\n\n🔐 Live mode requires Humsana Pro.\nGet it at: https://humsana.com/pro`;
+            }
             return {
                 status: "SIMULATED_OVERRIDE",
-                message: `🚨 [DRY RUN] Override accepted.\n\n` +
-                    `Command: \`${command}\`\n` +
-                    `Reason: ${overrideReason}\n\n` +
-                    `This command WOULD have been executed with override.\n` +
-                    `(Execution skipped: dry_run mode)`,
+                message,
                 fatigue: state.fatigue,
                 mode: "dry_run",
+                license: { tier: license.tier, valid: license.valid },
             };
         }
         try {
@@ -355,6 +456,7 @@ function safeExecuteCommand(command, overrideReason) {
                 exit_code: 0,
                 fatigue: state.fatigue,
                 mode: "live",
+                license: { tier: license.tier, valid: license.valid },
             };
         }
         catch (error) {
@@ -366,9 +468,11 @@ function safeExecuteCommand(command, overrideReason) {
                 exit_code: error.status || 1,
                 fatigue: state.fatigue,
                 mode: "live",
+                license: { tier: license.tier, valid: license.valid },
             };
         }
     }
+    // Block if dangerous + fatigued
     if (shouldBlock) {
         return {
             status: "BLOCKED",
@@ -380,22 +484,33 @@ function safeExecuteCommand(command, overrideReason) {
                 `**OVERRIDE SAFETY PROTOCOL: [reason]**\n\n` +
                 `Example: \`OVERRIDE SAFETY PROTOCOL: P0 production incident\``,
             fatigue: state.fatigue,
-            mode: config.execution_mode,
+            mode: effectiveMode,
             override_required: true,
+            license: { tier: license.tier, valid: license.valid },
         };
     }
-    if (config.execution_mode === "dry_run") {
+    // Execute or simulate
+    if (effectiveMode === "dry_run") {
+        let message = `✅ [DRY RUN] Safety check passed.\n\n` +
+            `Command: \`${command}\`\n\n` +
+            `This command WOULD have been executed.\n` +
+            `(Execution skipped: dry_run mode active)`;
+        // NEW: Add license message if user wants live but doesn't have Pro
+        if (config.execution_mode === "live" && !license.valid) {
+            message += `\n\n🔐 Live mode requires Humsana Pro.\nGet it at: https://humsana.com/pro`;
+        }
+        else {
+            message += `\n\nTo enable real execution, set \`execution_mode: live\` in ~/.humsana/config.yaml`;
+        }
         return {
             status: "SIMULATED",
-            message: `✅ [DRY RUN] Safety check passed.\n\n` +
-                `Command: \`${command}\`\n\n` +
-                `This command WOULD have been executed.\n` +
-                `(Execution skipped: dry_run mode active)\n\n` +
-                `To enable real execution, set \`execution_mode: live\` in ~/.humsana/config.yaml`,
+            message,
             fatigue: state.fatigue,
             mode: "dry_run",
+            license: { tier: license.tier, valid: license.valid },
         };
     }
+    // Live execution
     try {
         const result = (0, child_process_1.execSync)(command, {
             encoding: "utf-8",
@@ -410,6 +525,7 @@ function safeExecuteCommand(command, overrideReason) {
             exit_code: 0,
             fatigue: state.fatigue,
             mode: "live",
+            license: { tier: license.tier, valid: license.valid },
         };
     }
     catch (error) {
@@ -421,19 +537,16 @@ function safeExecuteCommand(command, overrideReason) {
             exit_code: error.status || 1,
             fatigue: state.fatigue,
             mode: "live",
+            license: { tier: license.tier, valid: license.valid },
         };
     }
 }
 // ============================================================
-// NEW: safe_write_file - AI Code Rewrite Protection
+// SAFE WRITE FILE (Updated with license check)
 // ============================================================
-/**
- * Calculate "Destructive Impact" - lines removed from original
- */
 function calculateDestructiveImpact(oldContent, newContent) {
     const oldLines = oldContent.split("\n");
     const newLines = newContent.split("\n");
-    // Simple diff: count lines that exist in old but not in new
     const oldSet = new Set(oldLines.map(l => l.trim()).filter(l => l.length > 0));
     const newSet = new Set(newLines.map(l => l.trim()).filter(l => l.length > 0));
     let linesRemoved = 0;
@@ -459,9 +572,6 @@ function calculateDestructiveImpact(oldContent, newContent) {
         percentageRemoved,
     };
 }
-/**
- * Save content to pending review folder
- */
 function saveToPendingReview(filepath, newContent) {
     (0, fs_1.mkdirSync)(REVIEW_DIR, { recursive: true });
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -470,13 +580,15 @@ function saveToPendingReview(filepath, newContent) {
     (0, fs_1.writeFileSync)(reviewPath, newContent, "utf-8");
     return reviewPath;
 }
-/**
- * Safe write file with cognitive interlock
- */
-function safeWriteFile(filepath, newContent, overrideReason) {
+async function safeWriteFile(filepath, newContent, overrideReason) {
     const config = loadConfig();
     const state = getCurrentState();
+    const license = await verifyLicense(); // NEW: Check license
     const fatigueLevel = state.fatigue.level;
+    // NEW: Determine effective mode based on license
+    const effectiveMode = (config.execution_mode === "live" && license.valid)
+        ? "live"
+        : "dry_run";
     // Check if file exists
     let oldContent = "";
     let isNewFile = true;
@@ -496,15 +608,20 @@ function safeWriteFile(filepath, newContent, overrideReason) {
     // Handle override for blocked writes
     if ((shouldBlock || shouldHardBlock) && overrideReason) {
         console.error(`[AUDIT] Write Override: ${filepath} | Removed: ${impact.linesRemoved} lines | Reason: ${overrideReason}`);
-        if (config.execution_mode === "dry_run") {
+        if (effectiveMode === "dry_run") {
+            let message = `🚨 [DRY RUN] Write override accepted.\n\n` +
+                `File: \`${filepath}\`\n` +
+                `Lines removed: ${impact.linesRemoved}\n` +
+                `Reason: ${overrideReason}\n\n` +
+                `File WOULD have been written.\n` +
+                `(Write skipped: dry_run mode)`;
+            // NEW: Add license message if needed
+            if (config.execution_mode === "live" && !license.valid) {
+                message += `\n\n🔐 Live mode requires Humsana Pro.\nGet it at: https://humsana.com/pro`;
+            }
             return {
                 status: "SIMULATED_OVERRIDE",
-                message: `🚨 [DRY RUN] Write override accepted.\n\n` +
-                    `File: \`${filepath}\`\n` +
-                    `Lines removed: ${impact.linesRemoved}\n` +
-                    `Reason: ${overrideReason}\n\n` +
-                    `File WOULD have been written.\n` +
-                    `(Write skipped: dry_run mode)`,
+                message,
                 filepath,
                 impact: {
                     lines_removed: impact.linesRemoved,
@@ -513,6 +630,7 @@ function safeWriteFile(filepath, newContent, overrideReason) {
                 },
                 fatigue: state.fatigue,
                 mode: "dry_run",
+                license: { tier: license.tier, valid: license.valid },
             };
         }
         // Live mode: actually write the file
@@ -529,6 +647,7 @@ function safeWriteFile(filepath, newContent, overrideReason) {
             },
             fatigue: state.fatigue,
             mode: "live",
+            license: { tier: license.tier, valid: license.valid },
         };
     }
     // HARD BLOCK: Critical fatigue + massive deletion
@@ -550,9 +669,10 @@ function safeWriteFile(filepath, newContent, overrideReason) {
                 percentage_removed: impact.percentageRemoved,
             },
             fatigue: state.fatigue,
-            mode: config.execution_mode,
+            mode: effectiveMode,
             review_path: reviewPath,
             override_required: true,
+            license: { tier: license.tier, valid: license.valid },
         };
     }
     // SOFT BLOCK: High fatigue + significant deletion
@@ -574,23 +694,28 @@ function safeWriteFile(filepath, newContent, overrideReason) {
                 percentage_removed: impact.percentageRemoved,
             },
             fatigue: state.fatigue,
-            mode: config.execution_mode,
+            mode: effectiveMode,
             review_path: reviewPath,
             override_required: true,
+            license: { tier: license.tier, valid: license.valid },
         };
     }
     // WARNING: Moderate fatigue + significant deletion
     if (shouldWarn) {
-        if (config.execution_mode === "dry_run") {
+        if (effectiveMode === "dry_run") {
+            let message = `⚠️ [DRY RUN] Warning: Large AI Edit\n\n` +
+                `File: \`${filepath}\`\n` +
+                `Lines removed: ${impact.linesRemoved}\n` +
+                `Fatigue: ${fatigueLevel}%\n\n` +
+                `This is a significant change. Please review carefully.\n\n` +
+                `File WOULD have been written.\n` +
+                `(Write skipped: dry_run mode)`;
+            if (config.execution_mode === "live" && !license.valid) {
+                message += `\n\n🔐 Live mode requires Humsana Pro.\nGet it at: https://humsana.com/pro`;
+            }
             return {
                 status: "SIMULATED_WARNING",
-                message: `⚠️ [DRY RUN] Warning: Large AI Edit\n\n` +
-                    `File: \`${filepath}\`\n` +
-                    `Lines removed: ${impact.linesRemoved}\n` +
-                    `Fatigue: ${fatigueLevel}%\n\n` +
-                    `This is a significant change. Please review carefully.\n\n` +
-                    `File WOULD have been written.\n` +
-                    `(Write skipped: dry_run mode)`,
+                message,
                 filepath,
                 impact: {
                     lines_removed: impact.linesRemoved,
@@ -599,6 +724,7 @@ function safeWriteFile(filepath, newContent, overrideReason) {
                 },
                 fatigue: state.fatigue,
                 mode: "dry_run",
+                license: { tier: license.tier, valid: license.valid },
             };
         }
         // Live mode with warning
@@ -618,17 +744,22 @@ function safeWriteFile(filepath, newContent, overrideReason) {
             },
             fatigue: state.fatigue,
             mode: "live",
+            license: { tier: license.tier, valid: license.valid },
         };
     }
     // SAFE: Low fatigue or small change
-    if (config.execution_mode === "dry_run") {
+    if (effectiveMode === "dry_run") {
+        let message = `✅ [DRY RUN] Safety check passed.\n\n` +
+            `File: \`${filepath}\`\n` +
+            `${isNewFile ? "New file" : `Lines removed: ${impact.linesRemoved}`}\n\n` +
+            `File WOULD have been written.\n` +
+            `(Write skipped: dry_run mode)`;
+        if (config.execution_mode === "live" && !license.valid) {
+            message += `\n\n🔐 Live mode requires Humsana Pro.\nGet it at: https://humsana.com/pro`;
+        }
         return {
             status: "SIMULATED",
-            message: `✅ [DRY RUN] Safety check passed.\n\n` +
-                `File: \`${filepath}\`\n` +
-                `${isNewFile ? "New file" : `Lines removed: ${impact.linesRemoved}`}\n\n` +
-                `File WOULD have been written.\n` +
-                `(Write skipped: dry_run mode)`,
+            message,
             filepath,
             impact: {
                 lines_removed: impact.linesRemoved,
@@ -637,6 +768,7 @@ function safeWriteFile(filepath, newContent, overrideReason) {
             },
             fatigue: state.fatigue,
             mode: "dry_run",
+            license: { tier: license.tier, valid: license.valid },
         };
     }
     // Live mode: write the file
@@ -653,15 +785,16 @@ function safeWriteFile(filepath, newContent, overrideReason) {
         },
         fatigue: state.fatigue,
         mode: "live",
+        license: { tier: license.tier, valid: license.valid },
     };
 }
 // ============================================================
-// MCP Server Setup
+// MCP SERVER SETUP
 // ============================================================
 async function main() {
     const server = new index_js_1.Server({
         name: "humsana",
-        version: "2.1.0", // Day 3.5 update
+        version: "2.2.0", // Updated version
     }, {
         capabilities: {
             tools: {},
@@ -672,7 +805,7 @@ async function main() {
         return {
             tools: [
                 {
-                    name: "get_user_state",
+                    name: "humsana:get_user_state",
                     description: "Get the user's current behavioral state including stress level, focus level, fatigue, and response style recommendations. Use this at the start of conversations to adapt your communication style.",
                     inputSchema: {
                         type: "object",
@@ -681,7 +814,7 @@ async function main() {
                     },
                 },
                 {
-                    name: "check_dangerous_command",
+                    name: "humsana:check_dangerous_command",
                     description: "Check if a command is dangerous and whether the user is too fatigued to safely run it. Use this before helping with potentially destructive operations like rm -rf, DROP TABLE, git push --force, kubectl delete, terraform destroy, etc.",
                     inputSchema: {
                         type: "object",
@@ -695,7 +828,7 @@ async function main() {
                     },
                 },
                 {
-                    name: "safe_execute_command",
+                    name: "humsana:safe_execute_command",
                     description: "Execute a shell command with Humsana Cognitive Interlock protection. This is THE tool for running commands - it blocks dangerous commands when the user is fatigued, requires override confirmation for high-risk operations, and logs all safety events. Use this instead of any other shell/bash tool.",
                     inputSchema: {
                         type: "object",
@@ -713,7 +846,7 @@ async function main() {
                     },
                 },
                 {
-                    name: "safe_write_file",
+                    name: "humsana:safe_write_file",
                     description: "Write content to a file with Humsana Cognitive Interlock protection. This tool prevents AI from making large destructive rewrites when the user is fatigued. If AI tries to delete/rewrite >30 lines while user is tired, it blocks the write and saves to a review folder. Use this for ALL file write operations.",
                     inputSchema: {
                         type: "object",
@@ -740,18 +873,32 @@ async function main() {
     // Handle tool calls
     server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
         const { name, arguments: args } = request.params;
-        if (name === "get_user_state") {
+        if (name === "humsana:get_user_state") {
             const state = getCurrentState();
+            const license = await verifyLicense(); // NEW: Include license info
+            const config = loadConfig();
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(state, null, 2),
+                        text: JSON.stringify({
+                            ...state,
+                            license: {
+                                tier: license.tier,
+                                valid: license.valid,
+                                live_mode_available: license.valid,
+                            },
+                            config: {
+                                execution_mode: config.execution_mode,
+                                effective_mode: (config.execution_mode === "live" && license.valid) ? "live" : "dry_run",
+                                fatigue_threshold: config.fatigue_threshold,
+                            },
+                        }, null, 2),
                     },
                 ],
             };
         }
-        if (name === "check_dangerous_command") {
+        if (name === "humsana:check_dangerous_command") {
             const command = args?.command || "";
             const result = checkDangerousCommand(command);
             return {
@@ -763,10 +910,10 @@ async function main() {
                 ],
             };
         }
-        if (name === "safe_execute_command") {
+        if (name === "humsana:safe_execute_command") {
             const command = args?.command || "";
             const overrideReason = args?.override_reason;
-            const result = safeExecuteCommand(command, overrideReason);
+            const result = await safeExecuteCommand(command, overrideReason); // NOW ASYNC
             return {
                 content: [
                     {
@@ -776,11 +923,11 @@ async function main() {
                 ],
             };
         }
-        if (name === "safe_write_file") {
+        if (name === "humsana:safe_write_file") {
             const filepath = args?.filepath || "";
             const content = args?.content || "";
             const overrideReason = args?.override_reason;
-            const result = safeWriteFile(filepath, content, overrideReason);
+            const result = await safeWriteFile(filepath, content, overrideReason); // NOW ASYNC
             return {
                 content: [
                     {
@@ -795,9 +942,10 @@ async function main() {
     // Start the server
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error("🚀 Humsana MCP server v2.1.0 running (Day 3.5: AI Write Protection)");
+    console.error("🚀 Humsana MCP server v2.2.0 running (with License Verification)");
     console.error("📁 Reading from:", DB_PATH);
     console.error("⚙️ Config:", CONFIG_PATH);
+    console.error("🔐 License:", LICENSE_PATH);
     console.error("📝 Review folder:", REVIEW_DIR);
 }
 main().catch((error) => {
