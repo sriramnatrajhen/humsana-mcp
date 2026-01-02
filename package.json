@@ -1,5 +1,6 @@
 {
   "name": "@humsana/mcp-server",
+  "mcpName": "io.github.sriramnatrajhen/humsana-mcp",
   "version": "1.1.0",
   "description": "MCP server for Humsana - AI that reads the room",
   "main": "dist/index.js",
