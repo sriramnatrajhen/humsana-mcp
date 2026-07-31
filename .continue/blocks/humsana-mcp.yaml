@@ -1,0 +1,19 @@
+name: Humsana User State
+version: 1.1.3
+schema: v1
+description: |
+  Real-time developer state detection. Detects stress, focus, cognitive load, 
+  and fatigue from typing patterns. Includes Cognitive Interlock to prevent 
+  dangerous commands (rm -rf, DROP TABLE) when you're tired.
+
+mcpServers:
+  - name: Humsana
+    command: npx
+    args:
+      - "@humsana/mcp-server"
+
+tags:
+  - developer-tools
+  - productivity
+  - safety
+  - cognitive
